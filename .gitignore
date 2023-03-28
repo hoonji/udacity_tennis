@@ -1,0 +1,14 @@
+*.swp
+env/
+node_modules/
+__pycache__/
+build/
+.git/
+.DS_STORE
+.ipynb_checkpoints/
+checkpoints/
+Reacher.app*
+Tennis.app*
+Reacher_multi.app*
+Crawler.app*
+*.pickle
