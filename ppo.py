@@ -24,9 +24,9 @@ CLIP_COEF = .2
 MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 512
+HIDDEN_LAYER_SIZE = 256
 ROLLOUT_LEN = 2048
-N_ROLLOUTS = 100
+N_ROLLOUTS = 200
 ENTROPY_COEF = .01
 
 
@@ -143,10 +143,10 @@ def run_ppo(env):
       rollout.advantages[t] = z
 
     for epoch in range(UPDATE_EPOCHS):
-      for observations, actions, advantages, logprobs, values in rollout.gen_minibatches(
+      for obs, actions, advantages, logprobs, values in rollout.gen_minibatches(
       ):
-        _, probs = agent.pi(observations)
-        next_values = agent.critic(observations)
+        _, probs = agent.pi(obs)
+        next_values = agent.critic(obs)
         next_logprobs = probs.log_prob(actions).sum(1)
         next_entropy = probs.entropy().sum(1)
         ratios = (next_logprobs - logprobs).exp()
