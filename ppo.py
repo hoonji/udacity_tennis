@@ -24,9 +24,9 @@ CLIP_COEF = .2
 MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 256
+HIDDEN_LAYER_SIZE = 128
 ROLLOUT_LEN = 2048
-N_ROLLOUTS = 200
+N_ROLLOUTS = 2000
 ENTROPY_COEF = .01
 
 
@@ -169,4 +169,7 @@ def run_ppo(env):
     with open(f'{brain_name}_scores.pickle', 'wb') as f:
       pickle.dump(scores, f)
 
-    print(f'last 100 returns: {np.array(scores[-100:]).mean()}')
+    last_100_returns = np.array(scores[-100:]).mean()
+    print(f'last 100 returns: {last_100_returns}')
+    if last_100_returns > .5:
+      print(f'solved after {update * ROLLOUT * num_agents} steps')
