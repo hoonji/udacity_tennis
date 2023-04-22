@@ -15,17 +15,18 @@ import torch.optim as optim
 from ppo_agent import Agent
 
 LEARNING_RATE = 3e-4
-ADAM_EPS = 1e-5
+# ADAM_EPS = 1e-5
+WEIGHT_DECAY=1e-4
 GAMMA = .99
 LAMBDA = .95
-UPDATE_EPOCHS = 4
-N_MINIBATCHES = 4
-CLIP_COEF = .2
-MAX_GRAD_NORM = 2
+UPDATE_EPOCHS = 3
+N_MINIBATCHES = 1
+CLIP_COEF = .1
+MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 64
-ROLLOUT_LEN = 1024
+HIDDEN_LAYER_SIZE = 32
+ROLLOUT_LEN = 64
 N_ROLLOUTS = 2000
 ENTROPY_COEF = .01
 
@@ -79,7 +80,7 @@ def run_ppo(env):
   batch_size = ROLLOUT_LEN * num_agents
 
   agent = Agent(n_observations, n_actions, HIDDEN_LAYER_SIZE).to(device)
-  optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, eps=ADAM_EPS)
+  optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 
   rollout = Rollout(batch_size=batch_size,
                     observations=torch.zeros(
