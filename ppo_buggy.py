@@ -16,6 +16,7 @@ from ppo_agent import Agent
 
 LEARNING_RATE = 3e-4
 ADAM_EPS = 1e-5
+WEIGHT_DECAY=1e-4
 GAMMA = .99
 LAMBDA = .95
 UPDATE_EPOCHS = 10
@@ -92,8 +93,7 @@ def run_ppo(env):
                     values=torch.zeros(ROLLOUT_LEN, num_agents).to(device),
                     advantages=torch.zeros(ROLLOUT_LEN, num_agents).to(device))
 
-  next_observations = torch.Tensor(env_info.vector_observations).to(device)
-  next_dones = torch.zeros(num_agents).to(device)
+  observations = torch.Tensor(env_info.vector_observations).to(device)
   current_returns = np.zeros(num_agents)
   scores = []
   time_checkpoint = time.time()
@@ -105,8 +105,6 @@ def run_ppo(env):
     time_checkpoint = time.time()
 
     for t in range(ROLLOUT_LEN):
-      observations = next_observations
-
       with torch.no_grad():
         actions, probs = agent.pi(observations)
         values = agent.critic(observations)
@@ -118,7 +116,7 @@ def run_ppo(env):
       rollout.observations[t] = observations
       rollout.actions[t] = actions
       rollout.rewards[t] = torch.Tensor(rewards).to(device)
-      rollout.dones[t] = next_dones  # for this step, record previous dones
+      rollout.dones[t] = torch.Tensor([dones]).to(device)
       rollout.logprobs[t] = probs.log_prob(actions).sum(1)
       rollout.values[t] = values.flatten()
 
@@ -130,29 +128,26 @@ def run_ppo(env):
       if any(dones):
         env_info = env.reset(train_mode=True)[brain_name]
 
-      next_observations = torch.Tensor(env_info.vector_observations).to(device)
-      next_observations[torch.isnan(next_observations)] = 0
-      next_dones = torch.Tensor([dones]).to(device)
+      observations = torch.Tensor(env_info.vector_observations).to(device)
+      # observations[torch.isnan(next_observations)] = 0
 
     z = 0
     for t in reversed(range(ROLLOUT_LEN)):
       if t == ROLLOUT_LEN - 1:
-        next_nonterminal = 1.0 - next_dones
         with torch.no_grad():
-          next_values = agent.critic(next_observations).flatten()
+          next_values = agent.critic(observations).flatten()
       else:
-        next_nonterminal = 1.0 - rollout.dones[t + 1]
         next_values = rollout.values[t + 1]
-      td_errors = rollout.rewards[
-          t] + next_nonterminal * GAMMA * next_values - rollout.values[t]
-      z = td_errors + next_nonterminal * GAMMA * GAE_LAMBDA * z
+      td_errors = rollout.rewards[t] + (
+          1.0 - rollout.dones[t]) * GAMMA * next_values - rollout.values[t]
+      z = td_errors + (1.0 - rollout.dones[t]) * GAMMA * GAE_LAMBDA * z
       rollout.advantages[t] = z
 
     for epoch in range(UPDATE_EPOCHS):
-      for observations, actions, advantages, logprobs, values in rollout.gen_minibatches(
+      for obs, actions, advantages, logprobs, values in rollout.gen_minibatches(
       ):
-        _, probs = agent.pi(observations)
-        next_values = agent.critic(observations)
+        _, probs = agent.pi(obs)
+        next_values = agent.critic(obs)
         next_logprobs = probs.log_prob(actions).sum(1)
         next_entropy = probs.entropy().sum(1)
         ratios = (next_logprobs - logprobs).exp()
@@ -175,4 +170,7 @@ def run_ppo(env):
     with open(f'{brain_name}_scores.pickle', 'wb') as f:
       pickle.dump(scores, f)
 
-    print(f'last 100 returns: {np.array(scores[-100:]).mean()}')
+    last_100_returns = np.array(scores[-100:]).mean()
+    print(f'last 100 returns: {last_100_returns}')
+    if last_100_returns > 30:
+      print(f'solved after {update * ROLLOUT * num_agents} steps')
