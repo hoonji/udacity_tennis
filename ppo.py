@@ -15,18 +15,19 @@ import torch.optim as optim
 from ppo_agent import Agent
 
 LEARNING_RATE = 3e-4
-ADAM_EPS = 1e-5
+# ADAM_EPS = 1e-5
+WEIGHT_DECAY = 1e-4
 GAMMA = .99
 LAMBDA = .95
-UPDATE_EPOCHS = 10
-N_MINIBATCHES = 32
-CLIP_COEF = .2
+UPDATE_EPOCHS = 3
+N_MINIBATCHES = 2
+CLIP_COEF = .1
 MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 512
-ROLLOUT_LEN = 2048
-N_ROLLOUTS = 100
+HIDDEN_LAYER_SIZE = 32
+ROLLOUT_LEN = 32
+N_ROLLOUTS = 10000
 ENTROPY_COEF = .01
 
 
@@ -79,7 +80,7 @@ def run_ppo(env):
   batch_size = ROLLOUT_LEN * num_agents
 
   agent = Agent(n_observations, n_actions, HIDDEN_LAYER_SIZE).to(device)
-  optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, eps=ADAM_EPS)
+  optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 
   rollout = Rollout(batch_size=batch_size,
                     observations=torch.zeros(
@@ -97,10 +98,11 @@ def run_ppo(env):
   current_returns = np.zeros(num_agents)
   scores = []
   time_checkpoint = time.time()
+  n_episodes = 0
 
   for update in range(1, N_ROLLOUTS + 1):
     print(
-        f"update {update}/{N_ROLLOUTS}. Last update in {time.time() - time_checkpoint}s"
+        f"update {update}/{N_ROLLOUTS}. finished {n_episodes} episodes. Last update in {time.time() - time_checkpoint}s"
     )
     time_checkpoint = time.time()
 
@@ -129,6 +131,7 @@ def run_ppo(env):
 
       if any(dones):
         env_info = env.reset(train_mode=True)[brain_name]
+        n_episodes += 1
 
       next_observations = torch.Tensor(env_info.vector_observations).to(device)
       next_observations[torch.isnan(next_observations)] = 0
