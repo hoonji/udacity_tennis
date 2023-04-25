@@ -94,6 +94,7 @@ def run_ppo(env):
                     advantages=torch.zeros(ROLLOUT_LEN, num_agents).to(device))
 
   next_observations = torch.Tensor(env_info.vector_observations).to(device)
+  next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
   next_dones = torch.zeros(num_agents).to(device)
   current_returns = np.zeros(num_agents)
   scores = []
@@ -134,6 +135,7 @@ def run_ppo(env):
         n_episodes += 1
 
       next_observations = torch.Tensor(env_info.vector_observations).to(device)
+      next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
       next_observations[torch.isnan(next_observations)] = 0
       next_dones = torch.Tensor([dones]).to(device)
 
