@@ -36,6 +36,6 @@ class Agent(nn.Module):
     distribution = Normal(means, self.std)
     if actions == None:
       actions = distribution.sample()
-    logprobs = distribution.log_prob(actions).sum(1)
+    logprobs = distribution.log_prob(actions).sum(-1)
 
     return actions, logprobs

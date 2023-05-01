@@ -162,7 +162,7 @@ def run_ppo(env, seed=123):
       td_errors = rollout.rewards[t] + (
           1 - rollout.dones[t]) * GAMMA * next_values - rollout.values[t]
       z = td_errors + (1 - rollout.dones[t]) * GAMMA * GAE_LAMBDA * z
-      rollout.advantages[t] = torch.from_numpy(z)
+      rollout.advantages[t] = torch.tensor(z)
 
     rollout.advantages = (rollout.advantages - rollout.advantages.mean()
                           ) / rollout.advantages.std()
