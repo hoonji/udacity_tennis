@@ -18,16 +18,14 @@ LEARNING_RATE = 3e-4
 # ADAM_EPS = 1e-5
 WEIGHT_DECAY = 1e-4
 GAMMA = .99
-LAMBDA = .95
 UPDATE_EPOCHS = 3
-CLIP_COEF = .1
+CLIP_COEF = .2
 MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 32
-N_ROLLOUTS = 10000
+HIDDEN_LAYER_SIZE = 64
 ENTROPY_COEF = .01
-N_EPISODES = 60000
+N_EPISODES = 20000
 
 
 class Rollout:
@@ -113,9 +111,6 @@ def run_ppo(env, seed=123):
     rollout.reset()
     env_info = env.reset(train_mode=True)[brain_name]
     observations = env_info.vector_observations
-    print(
-        f"episode {episode}. Last update in {time.time() - time_checkpoint}s")
-    time_checkpoint = time.time()
 
     while True:
       with torch.no_grad():
@@ -191,16 +186,23 @@ def run_ppo(env, seed=123):
         nn.utils.clip_grad_norm_(agent.parameters(), MAX_GRAD_NORM)
         optimizer.step()
 
-    torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
     if episode % 1000 == 0:
-      with open(f'{brain_name}_scores.pickle', 'wb') as f:
-        pickle.dump(scores, f)
+      torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
 
     last_100_returns = np.array(scores[-100:]).mean()
-    print(f'last 100 returns: {last_100_returns}')
+    if episode % 50 == 0:
+      print(
+          f"episode {episode}. Last update in {time.time() - time_checkpoint}s")
+      time_checkpoint = time.time()
+      print(f'last 100 returns: {last_100_returns}')
+
     if last_100_returns > .5:
+      print(f'last 100 returns: {last_100_returns}')
       print(f'solved after {episode} episodes')
 
-      print(f'saving model to {brain_name}_scores.pickle')
+      print(f'saving brain to {brain_name}_model.pickle')
+      torch.save(agent.state_dict(), f'{brain_name}_model.pickle')
+
+      print(f'saving scores to {brain_name}_scores.pickle')
       with open(f'{brain_name}_scores.pickle', 'wb') as f:
         pickle.dump(scores, f)
