@@ -20,155 +20,170 @@ WEIGHT_DECAY = 1e-4
 GAMMA = .99
 LAMBDA = .95
 UPDATE_EPOCHS = 3
-N_MINIBATCHES = 2
 CLIP_COEF = .1
 MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
 HIDDEN_LAYER_SIZE = 32
-ROLLOUT_LEN = 32
 N_ROLLOUTS = 10000
 ENTROPY_COEF = .01
+N_EPISODES = 60000
 
 
-@dataclass
 class Rollout:
   """Stores rollouts and yields minibatches for training."""
-  batch_size: int
-  observations: torch.Tensor
-  actions: torch.Tensor
-  rewards: torch.Tensor
-  dones: torch.Tensor
-  logprobs: torch.Tensor
-  values: torch.Tensor
-  advantages: torch.Tensor
 
-  # Tensors required for PPO training loop.
+  # Batch for PPO training loop.
   Batch = namedtuple(
-      'Batch', ['observations', 'actions', 'advantages', 'logprobs', 'values'])
+      'Batch', ['observations', 'obsactions', 'actions', 'advantages', 'logprobs', 'values'])
 
-  def gen_minibatches(self):
+  def __init__(self):
+    self.reset()
+
+  def __len__(self):
+    return len(self.actions)
+
+  def reset(self):
+    self.observations = []
+    self.actions = []
+    self.rewards = []
+    self.obsactions = []
+    self.dones = []
+    self.logprobs = []
+    self.values = []
+    self.advantages = None
+
+  def gen_minibatches(self, batch_size=256):
     """Generates shuffled minibatches using rollout data."""
-    batch_indices = np.arange(self.batch_size)
+    batch_indices = np.arange(len(self))
     np.random.shuffle(batch_indices)
-    minibatch_size = self.batch_size // N_MINIBATCHES
-    for start in range(0, self.batch_size, minibatch_size):
-      indices = batch_indices[start:start + minibatch_size]
+
+    observations = torch.tensor(self.observations, dtype=torch.float32)
+    actions = torch.tensor(self.actions, dtype=torch.float32)
+    obsactions = torch.tensor(self.obsactions, dtype=torch.float32)
+    logprobs = torch.tensor(self.logprobs, dtype=torch.float32)
+    values = torch.tensor(self.values, dtype=torch.float32)
+
+    for start in range(1 + len(self) // batch_size):
+      indices = batch_indices[start:start + batch_size]
       minibatch = self.Batch(
-          observations=self.observations.reshape(
-              (self.batch_size, -1))[indices],
-          actions=self.actions.reshape((self.batch_size, -1))[indices],
-          advantages=self.advantages.reshape(self.batch_size)[indices],
-          logprobs=self.logprobs.reshape(self.batch_size)[indices],
-          values=self.values.reshape(self.batch_size)[indices],
+          observations=observations[indices],
+          obsactions=obsactions[indices],
+          actions=actions[indices],
+          advantages=self.advantages[indices],
+          logprobs=logprobs[indices],
+          values=values[indices],
       )
       yield minibatch
 
 
-def run_ppo(env):
+def run_ppo(env, seed=123):
   """Trains a ppo agent in an environment.
 
   Saves model and learning curve checkpoints.
   """
+  # set seeds
+  torch.manual_seed(seed)
+  torch.cuda.manual_seed_all(seed)
+  np.random.seed(seed)
+  random.seed(seed)
+
   brain_name = env.brain_names[0]
   brain = env.brains[brain_name]
   env_info = env.reset(train_mode=True)[brain_name]
-  num_agents = len(env_info.agents)
+  observations = env_info.vector_observations
+  n_agents = len(env_info.agents)
   n_observations = env_info.vector_observations.shape[1]
   n_actions = brain.vector_action_space_size
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-  batch_size = ROLLOUT_LEN * num_agents
 
   agent = Agent(n_observations, n_actions, HIDDEN_LAYER_SIZE).to(device)
-  optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+  optimizer = optim.Adam(agent.parameters(),
+                         lr=LEARNING_RATE,
+                         weight_decay=WEIGHT_DECAY)
 
-  rollout = Rollout(batch_size=batch_size,
-                    observations=torch.zeros(
-                        (ROLLOUT_LEN, num_agents, n_observations)).to(device),
-                    actions=torch.zeros(
-                        (ROLLOUT_LEN, num_agents, n_actions)).to(device),
-                    logprobs=torch.zeros(ROLLOUT_LEN, num_agents).to(device),
-                    rewards=torch.zeros(ROLLOUT_LEN, num_agents).to(device),
-                    dones=torch.zeros(ROLLOUT_LEN, num_agents).to(device),
-                    values=torch.zeros(ROLLOUT_LEN, num_agents).to(device),
-                    advantages=torch.zeros(ROLLOUT_LEN, num_agents).to(device))
+  rollout = Rollout()
 
-  next_observations = torch.Tensor(env_info.vector_observations).to(device)
-  next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
-  next_dones = torch.zeros(num_agents).to(device)
-  current_returns = np.zeros(num_agents)
+  next_dones = torch.zeros(n_agents).to(device)
+  current_returns = np.zeros(n_agents)
   scores = []
   time_checkpoint = time.time()
-  n_episodes = 0
 
-  for update in range(1, N_ROLLOUTS + 1):
+  for episode in range(1, N_EPISODES + 1):
+    rollout.reset()
+    env_info = env.reset(train_mode=True)[brain_name]
+    observations = env_info.vector_observations
     print(
-        f"update {update}/{N_ROLLOUTS}. finished {n_episodes} episodes. Last update in {time.time() - time_checkpoint}s"
-    )
+        f"episode {episode}. Last update in {time.time() - time_checkpoint}s")
     time_checkpoint = time.time()
 
-    for t in range(ROLLOUT_LEN):
-      observations = next_observations
-
+    while True:
       with torch.no_grad():
-        actions, probs = agent.pi(observations)
-        values = agent.critic(observations)
-      env_info = env.step(actions.cpu().numpy())[brain_name]
-      dones = env_info.local_done
-      rewards = np.array(env_info.rewards)
-      rewards[np.isnan(rewards)] = 0
+        actions, logprobs = agent.pi(
+            torch.tensor(observations, dtype=torch.float32))
+        actions, logprobs = actions.numpy(), logprobs.numpy()
 
-      rollout.observations[t] = observations
-      rollout.actions[t] = actions
-      rollout.rewards[t] = torch.Tensor(rewards).to(device)
-      rollout.dones[t] = next_dones  # for this step, record previous dones
-      rollout.logprobs[t] = probs.log_prob(actions).sum(1)
-      rollout.values[t] = values.flatten()
+      env_info = env.step(np.clip(actions, -1, 1))[brain_name]
+      next_observations = env_info.vector_observations
+
+      rollout.observations.append(observations)
+      rollout.actions.append(actions)
+      rollout.logprobs.append(logprobs)
+      obsactions = []  # combined and normalized observation + action
+      obsactions.append(
+          np.concatenate(
+              (observations[0], observations[1], actions[0], actions[1])))
+      obsactions.append(
+          np.concatenate(
+              (observations[1], observations[0], actions[1], actions[0])))
+      rollout.obsactions.append(obsactions)
+      rollout.rewards.append(env_info.rewards)
+      rollout.dones.append(np.array(env_info.local_done))
+      with torch.no_grad():
+        values = agent.critic(torch.tensor(obsactions,
+                                           dtype=torch.float32)).squeeze(-1)
+        values = values.numpy()
+      rollout.values.append(values)
 
       # Record agent returns
       current_returns += env_info.rewards
-      scores.extend(current_returns[dones])
-      current_returns[dones] = 0
+      scores.extend(current_returns[env_info.local_done])
+      current_returns[env_info.local_done] = 0
 
-      if any(dones):
-        env_info = env.reset(train_mode=True)[brain_name]
-        n_episodes += 1
+      observations = next_observations
 
-      next_observations = torch.Tensor(env_info.vector_observations).to(device)
-      next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
-      next_observations[torch.isnan(next_observations)] = 0
-      next_dones = torch.Tensor([dones]).to(device)
+      if np.any(env_info.local_done):
+        break
 
-    z = 0
-    for t in reversed(range(ROLLOUT_LEN)):
-      if t == ROLLOUT_LEN - 1:
-        next_nonterminal = 1.0 - next_dones
-        with torch.no_grad():
-          next_values = agent.critic(next_observations).flatten()
-      else:
-        next_nonterminal = 1.0 - rollout.dones[t + 1]
-        next_values = rollout.values[t + 1]
-      td_errors = rollout.rewards[
-          t] + next_nonterminal * GAMMA * next_values - rollout.values[t]
-      z = td_errors + next_nonterminal * GAMMA * GAE_LAMBDA * z
-      rollout.advantages[t] = z
+    z = np.zeros(n_agents)
+    rollout_len = len(rollout)
+    rollout.advantages = torch.zeros((rollout_len, n_agents),
+                                     dtype=torch.float32)
+    for t in reversed(range(rollout_len)):
+      next_values = rollout.values[t + 1] if t != rollout_len - 1 else 0
+      td_errors = rollout.rewards[t] + (
+          1 - rollout.dones[t]) * GAMMA * next_values - rollout.values[t]
+      z = td_errors + (1 - rollout.dones[t]) * GAMMA * GAE_LAMBDA * z
+      rollout.advantages[t] = torch.from_numpy(z)
+
+    rollout.advantages = (rollout.advantages - rollout.advantages.mean()
+                          ) / rollout.advantages.std()
 
     for epoch in range(UPDATE_EPOCHS):
-      for observations, actions, advantages, logprobs, values in rollout.gen_minibatches(
+      for observations, obsactions, actions, advantages, logprobs, values in rollout.gen_minibatches(
       ):
-        _, probs = agent.pi(observations)
-        next_values = agent.critic(observations)
-        next_logprobs = probs.log_prob(actions).sum(1)
-        next_entropy = probs.entropy().sum(1)
-        ratios = (next_logprobs - logprobs).exp()
+        _, new_logprobs = agent.pi(observations, actions=actions)
+        new_values = agent.critic(obsactions).squeeze(-1)
+        entropy = -(new_logprobs.exp() * logprobs)
+        ratios = (new_logprobs - logprobs).exp()
 
         # Surrogate objective
         surrogate_loss1 = -advantages * ratios
         surrogate_loss2 = -advantages * torch.clamp(ratios, 1 - CLIP_COEF,
                                                     1 + CLIP_COEF)
         surrogate_loss = torch.max(surrogate_loss1, surrogate_loss2).mean()
-        value_loss = V_COEF * (((advantages + values) - next_values)**2).mean()
-        entropy_loss = ENTROPY_COEF * next_entropy.mean()
+        value_loss = V_COEF * (((advantages + values) - new_values)**2).mean()
+        entropy_loss = ENTROPY_COEF * entropy.mean()
         loss = surrogate_loss + value_loss - entropy_loss
 
         optimizer.zero_grad()
@@ -177,7 +192,15 @@ def run_ppo(env):
         optimizer.step()
 
     torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
-    with open(f'{brain_name}_scores.pickle', 'wb') as f:
-      pickle.dump(scores, f)
+    if episode % 1000 == 0:
+      with open(f'{brain_name}_scores.pickle', 'wb') as f:
+        pickle.dump(scores, f)
 
-    print(f'last 100 returns: {np.array(scores[-100:]).mean()}')
+    last_100_returns = np.array(scores[-100:]).mean()
+    print(f'last 100 returns: {last_100_returns}')
+    if last_100_returns > .5:
+      print(f'solved after {episode} episodes')
+
+      print(f'saving model to {brain_name}_scores.pickle')
+      with open(f'{brain_name}_scores.pickle', 'wb') as f:
+        pickle.dump(scores, f)
