@@ -19,11 +19,11 @@ LEARNING_RATE = 3e-4
 WEIGHT_DECAY = 1e-4
 GAMMA = .99
 UPDATE_EPOCHS = 3
-CLIP_COEF = .2
+CLIP_COEF = .1
 MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 64
+HIDDEN_LAYER_SIZE = 32
 ENTROPY_COEF = .01
 N_EPISODES = 20000
 
@@ -130,7 +130,10 @@ def run_ppo(env, seed=123):
               (observations[0], observations[1], actions[0], actions[1])))
       obsactions.append(
           np.concatenate(
-              (observations[1], observations[0], actions[1], actions[0])))
+              (observations[0], observations[1], actions[0], actions[1])))
+      # obsactions.append(
+          # np.concatenate(
+              # (observations[1], observations[0], actions[1], actions[0])))
       rollout.obsactions.append(obsactions)
       rollout.rewards.append(env_info.rewards)
       rollout.dones.append(np.array(env_info.local_done))
