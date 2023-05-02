@@ -15,7 +15,6 @@ import torch.optim as optim
 from ppo_agent import Agent
 
 LEARNING_RATE = 3e-4
-# ADAM_EPS = 1e-5
 WEIGHT_DECAY = 1e-4
 GAMMA = .99
 UPDATE_EPOCHS = 3
@@ -25,7 +24,7 @@ GAE_LAMBDA = .95
 V_COEF = .5
 HIDDEN_LAYER_SIZE = 32
 ENTROPY_COEF = .01
-N_EPISODES = 20000
+N_EPISODES = 60000
 
 
 class Rollout:
@@ -56,11 +55,11 @@ class Rollout:
     batch_indices = np.arange(len(self))
     np.random.shuffle(batch_indices)
 
-    observations = torch.tensor(self.observations, dtype=torch.float32)
-    actions = torch.tensor(self.actions, dtype=torch.float32)
-    obsactions = torch.tensor(self.obsactions, dtype=torch.float32)
-    logprobs = torch.tensor(self.logprobs, dtype=torch.float32)
-    values = torch.tensor(self.values, dtype=torch.float32)
+    observations = torch.tensor(np.array(self.observations), dtype=torch.float32)
+    actions = torch.tensor(np.array(self.actions), dtype=torch.float32)
+    obsactions = torch.tensor(np.array(self.obsactions), dtype=torch.float32)
+    logprobs = torch.tensor(np.array(self.logprobs), dtype=torch.float32)
+    values = torch.tensor(np.array(self.values), dtype=torch.float32)
 
     for start in range(1 + len(self) // batch_size):
       indices = batch_indices[start:start + batch_size]
@@ -124,13 +123,11 @@ def run_ppo(env, seed=123):
       rollout.observations.append(observations)
       rollout.actions.append(actions)
       rollout.logprobs.append(logprobs)
-      obsactions = []  # combined and normalized observation + action
-      obsactions.append(
-          np.concatenate(
-              (observations[0], observations[1], actions[0], actions[1])))
-      obsactions.append(
-          np.concatenate(
-              (observations[0], observations[1], actions[0], actions[1])))
+      obsactions = np.zeros((2, (n_observations + n_actions)*2))  # combined and normalized observation + action
+      obsactions[0] = np.concatenate(
+              (observations[0], observations[1], actions[0], actions[1]))
+      obsactions[1] = np.concatenate(
+              (observations[0], observations[1], actions[0], actions[1]))
       # obsactions.append(
           # np.concatenate(
               # (observations[1], observations[0], actions[1], actions[0])))
@@ -189,11 +186,9 @@ def run_ppo(env, seed=123):
         nn.utils.clip_grad_norm_(agent.parameters(), MAX_GRAD_NORM)
         optimizer.step()
 
+    last_100_returns = np.array(scores[-100:]).mean()
     if episode % 1000 == 0:
       torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
-
-    last_100_returns = np.array(scores[-100:]).mean()
-    if episode % 50 == 0:
       print(
           f"episode {episode}. Last update in {time.time() - time_checkpoint}s")
       time_checkpoint = time.time()
