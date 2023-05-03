@@ -17,6 +17,11 @@ class Agent(nn.Module):
 
   def __init__(self, n_observations, n_actions, hidden_size=256):
     super().__init__()
+    self.std = nn.Parameter(torch.ones(1, n_actions))
+    self.actor_means = nn.Sequential(
+        OrthogonalInitLinear(n_observations, hidden_size), nn.LeakyReLU(),
+        OrthogonalInitLinear(hidden_size, hidden_size), nn.LeakyReLU(),
+        OrthogonalInitLinear(hidden_size, n_actions, scale=1e-3), nn.Tanh())
     self.critic = nn.Sequential(
         OrthogonalInitLinear(n_observations * 2 + n_actions * 2, hidden_size),
         nn.LeakyReLU(),
@@ -24,11 +29,6 @@ class Agent(nn.Module):
         nn.LeakyReLU(),
         OrthogonalInitLinear(hidden_size, 1, scale=1e-3),
     )
-    self.actor_means = nn.Sequential(
-        OrthogonalInitLinear(n_observations, hidden_size), nn.LeakyReLU(),
-        OrthogonalInitLinear(hidden_size, hidden_size), nn.LeakyReLU(),
-        OrthogonalInitLinear(hidden_size, n_actions, scale=1e-3), nn.Tanh())
-    self.std = nn.Parameter(torch.ones(1, n_actions))
 
   def pi(self, x, actions=None):
     """Returns a sampled action and its probability distribution."""

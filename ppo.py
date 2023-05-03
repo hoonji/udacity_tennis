@@ -1,6 +1,3 @@
-# Implementation based on Costa Huang's PPO implementation: https://github.com/vwxyzjn/ppo-implementation-details/blob/main/ppo_continuous_action.py
-# Updated to support and solve the multi agent Reacher environment.
-
 import time
 import pickle
 import random
@@ -11,15 +8,16 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from tensorboardX import SummaryWriter
 
 from ppo_agent import Agent
 
 LEARNING_RATE = 3e-4
 WEIGHT_DECAY = 1e-4
 GAMMA = .99
-UPDATE_EPOCHS = 4
+UPDATE_EPOCHS = 3
 CLIP_COEF = .1
-MAX_GRAD_NORM = 1
+MAX_GRAD_NORM = 5
 GAE_LAMBDA = .99
 V_COEF = .5
 HIDDEN_LAYER_SIZE = 32
@@ -31,8 +29,10 @@ class Rollout:
   """Stores rollouts and yields minibatches for training."""
 
   # Batch for PPO training loop.
-  Batch = namedtuple(
-      'Batch', ['observations', 'obsactions', 'actions', 'advantages', 'logprobs', 'values'])
+  Batch = namedtuple('Batch', [
+      'observations', 'obsactions', 'actions', 'advantages', 'logprobs',
+      'values'
+  ])
 
   def __init__(self):
     self.reset()
@@ -49,13 +49,15 @@ class Rollout:
     self.logprobs = []
     self.values = []
     self.advantages = None
+    self.returns = None
 
   def gen_minibatches(self, batch_size=256):
     """Generates shuffled minibatches using rollout data."""
     batch_indices = np.arange(len(self))
     np.random.shuffle(batch_indices)
 
-    observations = torch.tensor(np.array(self.observations), dtype=torch.float32)
+    observations = torch.tensor(np.array(self.observations),
+                                dtype=torch.float32)
     actions = torch.tensor(np.array(self.actions), dtype=torch.float32)
     obsactions = torch.tensor(np.array(self.obsactions), dtype=torch.float32)
     logprobs = torch.tensor(np.array(self.logprobs), dtype=torch.float32)
@@ -79,6 +81,10 @@ def run_ppo(env, seed=123):
 
   Saves model and learning curve checkpoints.
   """
+  print('training start')
+
+  writer = SummaryWriter()
+
   # set seeds
   torch.manual_seed(seed)
   torch.cuda.manual_seed_all(seed)
@@ -123,14 +129,16 @@ def run_ppo(env, seed=123):
       rollout.observations.append(observations)
       rollout.actions.append(actions)
       rollout.logprobs.append(logprobs)
-      obsactions = np.zeros((2, (n_observations + n_actions)*2))  # combined and normalized observation + action
+      obsactions = np.zeros(
+          (2, (n_observations + n_actions) *
+           2))  # combined and normalized observation + action
       obsactions[0] = np.concatenate(
-              (observations[0], observations[1], actions[0], actions[1]))
+          (observations[0], observations[1], actions[0], actions[1]))
       obsactions[1] = np.concatenate(
-              (observations[0], observations[1], actions[0], actions[1]))
+          (observations[0], observations[1], actions[0], actions[1]))
       # obsactions.append(
-          # np.concatenate(
-              # (observations[1], observations[0], actions[1], actions[0])))
+      # np.concatenate(
+      # (observations[1], observations[0], actions[1], actions[0])))
       rollout.obsactions.append(obsactions)
       rollout.rewards.append(env_info.rewards)
       rollout.dones.append(np.array(env_info.local_done))
@@ -150,11 +158,18 @@ def run_ppo(env, seed=123):
       if np.any(env_info.local_done):
         break
 
+    writer.add_scalar('max_reward', np.array(rollout.rewards).max(), episode)
+
     z = np.zeros(n_agents)
     rollout_len = len(rollout)
-    rollout.advantages = torch.zeros((rollout_len, n_agents),
-                                     dtype=torch.float32)
+    rollout.advantages = torch.zeros((len(rollout), 2), dtype=torch.float32)
+    rollout.returns = torch.zeros((len(rollout), 2), dtype=torch.float32)
     for t in reversed(range(rollout_len)):
+      next_returns = 0 if t == rollout_len - 1 else rollout.returns[t + 1].detach().numpy()
+      cur_return = rollout.rewards[t] + (
+          1 - rollout.dones[t]) * GAMMA * next_returns
+      rollout.returns[t] = torch.tensor(cur_return)
+
       next_values = rollout.values[t + 1] if t != rollout_len - 1 else 0
       td_errors = rollout.rewards[t] + (
           1 - rollout.dones[t]) * GAMMA * next_values - rollout.values[t]
@@ -163,6 +178,9 @@ def run_ppo(env, seed=123):
 
     rollout.advantages = (rollout.advantages - rollout.advantages.mean()
                           ) / rollout.advantages.std()
+
+    writer.add_scalar('returns', rollout.returns.mean(), episode)
+    writer.add_scalar('advantages', rollout.advantages.mean(), episode)
 
     for epoch in range(UPDATE_EPOCHS):
       for observations, obsactions, actions, advantages, logprobs, values in rollout.gen_minibatches(
@@ -177,9 +195,11 @@ def run_ppo(env, seed=123):
         surrogate_loss2 = -advantages * torch.clamp(ratios, 1 - CLIP_COEF,
                                                     1 + CLIP_COEF)
         surrogate_loss = torch.max(surrogate_loss1, surrogate_loss2).mean()
-        value_loss = V_COEF * (((advantages + values) - new_values)**2).mean()
+        value_loss = V_COEF * ((rollout.returns - new_values)**2).mean()
         entropy_loss = ENTROPY_COEF * entropy.mean()
         loss = surrogate_loss + value_loss - entropy_loss
+
+        writer.add_scalar('loss', loss, episode)
 
         optimizer.zero_grad()
         loss.backward()
@@ -190,7 +210,8 @@ def run_ppo(env, seed=123):
     if episode % 1000 == 0:
       torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
       print(
-          f"episode {episode}. Last update in {time.time() - time_checkpoint}s")
+          f"episode {episode}. Last update in {time.time() - time_checkpoint}s"
+      )
       time_checkpoint = time.time()
       print(f'last 100 returns: {last_100_returns}')
 
