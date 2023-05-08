@@ -20,7 +20,7 @@ CLIP_COEF = .1
 MAX_GRAD_NORM = 5
 GAE_LAMBDA = .99
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 32
+HIDDEN_LAYER_SIZE = 64
 ENTROPY_COEF = .01
 N_EPISODES = 60000
 
@@ -158,7 +158,7 @@ def run_ppo(env, seed=123):
       if np.any(env_info.local_done):
         break
 
-    writer.add_scalar('max_reward', np.array(rollout.rewards).max(), episode)
+    writer.add_scalar('v2/max_reward', np.array(rollout.rewards).max(), episode)
 
     z = np.zeros(n_agents)
     rollout_len = len(rollout)
@@ -179,8 +179,8 @@ def run_ppo(env, seed=123):
     rollout.advantages = (rollout.advantages - rollout.advantages.mean()
                           ) / rollout.advantages.std()
 
-    writer.add_scalar('returns', rollout.returns.mean(), episode)
-    writer.add_scalar('advantages', rollout.advantages.mean(), episode)
+    writer.add_scalar('v2/returns', rollout.returns.mean(), episode)
+    writer.add_scalar('v2/advantages', rollout.advantages.mean(), episode)
 
     for epoch in range(UPDATE_EPOCHS):
       for observations, obsactions, actions, advantages, logprobs, values in rollout.gen_minibatches(
@@ -199,7 +199,7 @@ def run_ppo(env, seed=123):
         entropy_loss = ENTROPY_COEF * entropy.mean()
         loss = surrogate_loss + value_loss - entropy_loss
 
-        writer.add_scalar('loss', loss, episode)
+        writer.add_scalar('v2/loss', loss, episode)
 
         optimizer.zero_grad()
         loss.backward()
