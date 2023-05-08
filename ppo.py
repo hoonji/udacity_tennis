@@ -15,19 +15,18 @@ import torch.optim as optim
 from ppo_agent import Agent
 
 LEARNING_RATE = 3e-4
-# ADAM_EPS = 1e-5
-WEIGHT_DECAY = 1e-4
+ADAM_EPS = 1e-5
 GAMMA = .99
 LAMBDA = .95
 UPDATE_EPOCHS = 3
-N_MINIBATCHES = 2
-CLIP_COEF = .1
-MAX_GRAD_NORM = 5
+N_MINIBATCHES = 10
+CLIP_COEF = .2
+MAX_GRAD_NORM = .5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 32
-ROLLOUT_LEN = 32
-N_ROLLOUTS = 10000
+HIDDEN_LAYER_SIZE = 128
+ROLLOUT_LEN = 1024
+N_ROLLOUTS = 50000
 ENTROPY_COEF = .01
 
 
@@ -80,7 +79,7 @@ def run_ppo(env):
   batch_size = ROLLOUT_LEN * num_agents
 
   agent = Agent(n_observations, n_actions, HIDDEN_LAYER_SIZE).to(device)
-  optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+  optimizer = optim.Adam(agent.parameters(), lr=LEARNING_RATE, eps=ADAM_EPS)
 
   rollout = Rollout(batch_size=batch_size,
                     observations=torch.zeros(
@@ -94,19 +93,15 @@ def run_ppo(env):
                     advantages=torch.zeros(ROLLOUT_LEN, num_agents).to(device))
 
   next_observations = torch.Tensor(env_info.vector_observations).to(device)
-  next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
+  # next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
   next_dones = torch.zeros(num_agents).to(device)
   current_returns = np.zeros(num_agents)
   scores = []
   time_checkpoint = time.time()
   n_episodes = 0
 
+  print('Beginning training loop')
   for update in range(1, N_ROLLOUTS + 1):
-    print(
-        f"update {update}/{N_ROLLOUTS}. finished {n_episodes} episodes. Last update in {time.time() - time_checkpoint}s"
-    )
-    time_checkpoint = time.time()
-
     for t in range(ROLLOUT_LEN):
       observations = next_observations
 
@@ -135,9 +130,13 @@ def run_ppo(env):
         n_episodes += 1
 
       next_observations = torch.Tensor(env_info.vector_observations).to(device)
-      next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
+      # next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
       next_observations[torch.isnan(next_observations)] = 0
       next_dones = torch.Tensor([dones]).to(device)
+
+    last_100_avg = np.array(scores[-100:]).mean()
+    if last_100_avg > .5:
+      print(f'Solved in {n_episodes} episodes')
 
     z = 0
     for t in reversed(range(ROLLOUT_LEN)):
@@ -176,8 +175,18 @@ def run_ppo(env):
         nn.utils.clip_grad_norm_(agent.parameters(), MAX_GRAD_NORM)
         optimizer.step()
 
-    torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
-    with open(f'{brain_name}_scores.pickle', 'wb') as f:
-      pickle.dump(scores, f)
+    # if update % 5000 == 0:
+    if update % 10 == 0:
+      print(
+          f"update {update}/{N_ROLLOUTS}. finished {n_episodes} episodes. Last update in {time.time() - time_checkpoint}s"
+      )
+      time_checkpoint = time.time()
+      print(f'average of last 100 returns: {last_100_avg}')
 
-    print(f'last 100 returns: {np.array(scores[-100:]).mean()}')
+      torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
+      with open(f'{brain_name}_scores.pickle', 'wb') as f:
+        pickle.dump(scores, f)
+
+  torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
+  with open(f'{brain_name}_scores.pickle', 'wb') as f:
+    pickle.dump(scores, f)
