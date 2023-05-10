@@ -24,7 +24,7 @@ CLIP_COEF = .2
 MAX_GRAD_NORM = .5
 GAE_LAMBDA = .95
 V_COEF = .5
-HIDDEN_LAYER_SIZE = 128
+HIDDEN_LAYER_SIZE = 32
 ROLLOUT_LEN = 1024
 N_ROLLOUTS = 50000
 ENTROPY_COEF = .01
@@ -99,6 +99,7 @@ def run_ppo(env):
   scores = []
   time_checkpoint = time.time()
   n_episodes = 0
+  max_return = 0
 
   print('Beginning training loop')
   for update in range(1, N_ROLLOUTS + 1):
@@ -111,7 +112,7 @@ def run_ppo(env):
       env_info = env.step(actions.cpu().numpy())[brain_name]
       dones = env_info.local_done
       rewards = np.array(env_info.rewards)
-      rewards[np.isnan(rewards)] = 0
+      # rewards[np.isnan(rewards)] = 0
 
       rollout.observations[t] = observations
       rollout.actions[t] = actions
@@ -131,7 +132,7 @@ def run_ppo(env):
 
       next_observations = torch.Tensor(env_info.vector_observations).to(device)
       # next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
-      next_observations[torch.isnan(next_observations)] = 0
+      # next_observations[torch.isnan(next_observations)] = 0
       next_dones = torch.Tensor([dones]).to(device)
 
     last_100_avg = np.array(scores[-100:]).mean()
@@ -182,6 +183,7 @@ def run_ppo(env):
       )
       time_checkpoint = time.time()
       print(f'average of last 100 returns: {last_100_avg}')
+      print(f'max of last 100: {max(scores[-100:])}')
 
       torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
       with open(f'{brain_name}_scores.pickle', 'wb') as f:

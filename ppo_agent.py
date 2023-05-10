@@ -22,12 +22,11 @@ class Agent(nn.Module):
         OrthogonalInitLinear(hidden_size, hidden_size),
         nn.ReLU(),
         OrthogonalInitLinear(hidden_size, 1),
-        nn.Tanh(),
     )
     self.actor_means = nn.Sequential(
         OrthogonalInitLinear(n_observations, hidden_size), nn.ReLU(),
         OrthogonalInitLinear(hidden_size, hidden_size), nn.ReLU(),
-        OrthogonalInitLinear(hidden_size, n_actions))
+        OrthogonalInitLinear(hidden_size, n_actions, stddev=.01), nn.Tanh())
     self.actor_logstd = nn.Parameter(torch.zeros(1, n_actions))
 
   def pi(self, x):
