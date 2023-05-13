@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from tensorboardX import SummaryWriter
 
 from ppo_agent import Agent
 
@@ -21,13 +22,13 @@ LAMBDA = .95
 UPDATE_EPOCHS = 3
 N_MINIBATCHES = 10
 CLIP_COEF = .2
-MAX_GRAD_NORM = .5
+MAX_GRAD_NORM = 5
 GAE_LAMBDA = .95
 V_COEF = .5
 HIDDEN_LAYER_SIZE = 32
 ROLLOUT_LEN = 1024
 N_ROLLOUTS = 50000
-ENTROPY_COEF = .01
+ENTROPY_COEF = 0
 
 
 @dataclass
@@ -69,6 +70,8 @@ def run_ppo(env):
 
   Saves model and learning curve checkpoints.
   """
+  writer = SummaryWriter()
+
   brain_name = env.brain_names[0]
   brain = env.brains[brain_name]
   env_info = env.reset(train_mode=True)[brain_name]
@@ -93,16 +96,19 @@ def run_ppo(env):
                     advantages=torch.zeros(ROLLOUT_LEN, num_agents).to(device))
 
   next_observations = torch.Tensor(env_info.vector_observations).to(device)
-  # next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
   next_dones = torch.zeros(num_agents).to(device)
   current_returns = np.zeros(num_agents)
   scores = []
   time_checkpoint = time.time()
   n_episodes = 0
   max_return = 0
+  solved = False
 
   print('Beginning training loop')
   for update in range(1, N_ROLLOUTS + 1):
+    lr_frac = 1.0 - (update - 1) / N_ROLLOUTS
+    optimizer.param_groups[0]["lr"] = lr_frac * LEARNING_RATE
+
     for t in range(ROLLOUT_LEN):
       observations = next_observations
 
@@ -112,7 +118,6 @@ def run_ppo(env):
       env_info = env.step(actions.cpu().numpy())[brain_name]
       dones = env_info.local_done
       rewards = np.array(env_info.rewards)
-      # rewards[np.isnan(rewards)] = 0
 
       rollout.observations[t] = observations
       rollout.actions[t] = actions
@@ -127,17 +132,23 @@ def run_ppo(env):
       current_returns[dones] = 0
 
       if any(dones):
+        writer.add_scalar("ppo/agent0_returns", scores[-2], n_episodes)
+        writer.add_scalar("ppo/agent1_returns", scores[-1], n_episodes)
         env_info = env.reset(train_mode=True)[brain_name]
         n_episodes += 1
 
       next_observations = torch.Tensor(env_info.vector_observations).to(device)
-      # next_observations[:,[4,12,20]] = torch.abs(next_observations[:,[4,12,20]])
-      # next_observations[torch.isnan(next_observations)] = 0
       next_dones = torch.Tensor([dones]).to(device)
 
     last_100_avg = np.array(scores[-100:]).mean()
-    if last_100_avg > .5:
+    writer.add_scalar("ppo/last_100_returns", last_100_avg, update)
+    if not solved and last_100_avg > .5:
       print(f'Solved in {n_episodes} episodes')
+      solved = True
+
+    if last_100_avg > 1.0:
+      torch.save(agent.state_dict(), f'{brain_name}_model_final.pickle')
+      return
 
     z = 0
     for t in reversed(range(ROLLOUT_LEN)):
@@ -153,6 +164,8 @@ def run_ppo(env):
       z = td_errors + next_nonterminal * GAMMA * GAE_LAMBDA * z
       rollout.advantages[t] = z
 
+    clipped = []
+    ratios_list = []
     for epoch in range(UPDATE_EPOCHS):
       for observations, actions, advantages, logprobs, values in rollout.gen_minibatches(
       ):
@@ -161,6 +174,9 @@ def run_ppo(env):
         next_logprobs = probs.log_prob(actions).sum(1)
         next_entropy = probs.entropy().sum(1)
         ratios = (next_logprobs - logprobs).exp()
+        # Add to tracking variables
+        ratios_list.append(ratios.mean().item())
+        clipped.append(((1.0 - ratios) > CLIP_COEF).float().mean().item())
 
         # Surrogate objective
         surrogate_loss1 = -advantages * ratios
@@ -176,6 +192,15 @@ def run_ppo(env):
         nn.utils.clip_grad_norm_(agent.parameters(), MAX_GRAD_NORM)
         optimizer.step()
 
+    writer.add_scalar('ppo/advantages', rollout.advantages.mean(), update)
+    writer.add_scalar('ppo/prob_ratios', np.mean(ratios_list), update)
+    writer.add_scalar('ppo/policy_loss', surrogate_loss, update)
+    writer.add_scalar('ppo/clipped_ratio', np.mean(clipped), update)
+    writer.add_scalar('ppo/values', rollout.values.mean(), update)
+    writer.add_scalar('ppo/value_loss', value_loss, update)
+    writer.add_scalar('ppo/probs', torch.exp(rollout.logprobs).mean(), update)
+    writer.add_scalar('ppo/stddevs', torch.exp(agent.actor_logstd).mean(), update)
+
     # if update % 5000 == 0:
     if update % 10 == 0:
       print(
@@ -185,10 +210,7 @@ def run_ppo(env):
       print(f'average of last 100 returns: {last_100_avg}')
       print(f'max of last 100: {max(scores[-100:])}')
 
-      torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
-      with open(f'{brain_name}_scores.pickle', 'wb') as f:
-        pickle.dump(scores, f)
+    if update % 1000 == 0:
+      torch.save(agent.state_dict(), f'checkpoints/{brain_name}_model_checkpoint_update_{update}.pickle')
 
-  torch.save(agent.state_dict(), f'{brain_name}_model_checkpoint.pickle')
-  with open(f'{brain_name}_scores.pickle', 'wb') as f:
-    pickle.dump(scores, f)
+  torch.save(agent.state_dict(), f'{brain_name}_model_final.pickle')

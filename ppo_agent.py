@@ -18,14 +18,14 @@ class Agent(nn.Module):
     super().__init__()
     self.critic = nn.Sequential(
         OrthogonalInitLinear(n_observations, hidden_size),
-        nn.ReLU(),
+        nn.Tanh(),
         OrthogonalInitLinear(hidden_size, hidden_size),
-        nn.ReLU(),
+        nn.Tanh(),
         OrthogonalInitLinear(hidden_size, 1),
     )
     self.actor_means = nn.Sequential(
-        OrthogonalInitLinear(n_observations, hidden_size), nn.ReLU(),
-        OrthogonalInitLinear(hidden_size, hidden_size), nn.ReLU(),
+        OrthogonalInitLinear(n_observations, hidden_size), nn.Tanh(),
+        OrthogonalInitLinear(hidden_size, hidden_size), nn.Tanh(),
         OrthogonalInitLinear(hidden_size, n_actions, stddev=.01), nn.Tanh())
     self.actor_logstd = nn.Parameter(torch.zeros(1, n_actions))
 
